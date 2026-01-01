@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2026-01-01
+
+### Features
+
+- **Stash Management** - `stash save/list/pop/apply/drop/clear`
+- **Cherry-Pick** - `cherry-pick <commit>`
+- **Revert** - `revert <commit>` with optional `--no-commit`
+- **Squash** - `squash <count>` to squash last N commits
+- **Diff** - `diff` with `--staged` and `--stat` options
+- **Tag Management** - `tag list/create/delete`
+- **Update** - `update` command (placeholder for self-update)
+- **Doctor** - `doctor` health check for git and config
+
 ## [2.1.0] - 2026-01-01
 
 ### Features

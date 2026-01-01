@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 )
 
 // Release represents a GitHub release.
@@ -18,6 +20,7 @@ type Release struct {
 	CreatedAt   string  `json:"created_at"`
 	PublishedAt string  `json:"published_at"`
 	HTMLURL     string  `json:"html_url"`
+	UploadURL   string  `json:"upload_url"`
 	Assets      []Asset `json:"assets"`
 	Author      User    `json:"author"`
 }
@@ -122,4 +125,50 @@ func (c *Client) DeleteRelease(owner, repo string, releaseID int64) error {
 	}
 
 	return handleResponse(resp, nil)
+}
+
+// UploadReleaseAsset uploads a file to a release.
+func (c *Client) UploadReleaseAsset(uploadURL, filename, contentType string, data []byte) (*Asset, error) {
+	// GitHub upload URL format: https://uploads.github.com/repos/:owner/:repo/releases/:release_id/assets?name=:name
+	// Remove the template part and add filename
+	uploadURL = strings.Split(uploadURL, "{")[0]
+	uploadURL = uploadURL + "?name=" + filename
+
+	req, err := http.NewRequest("POST", uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("User-Agent", userAgent)
+	req.ContentLength = int64(len(data))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	var asset Asset
+	if err := handleResponse(resp, &asset); err != nil {
+		return nil, err
+	}
+
+	return &asset, nil
+}
+
+// GetReleaseByID returns a release by its ID.
+func (c *Client) GetReleaseByID(owner, repo string, releaseID int64) (*Release, error) {
+	path := fmt.Sprintf("/repos/%s/%s/releases/%d", owner, repo, releaseID)
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var release Release
+	if err := handleResponse(resp, &release); err != nil {
+		return nil, err
+	}
+
+	return &release, nil
 }

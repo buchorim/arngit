@@ -33,7 +33,7 @@ type RateLimit struct {
 // NewClient creates a new GitHub client.
 func NewClient(username, token string) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
 		token:      token,
 		username:   username,
 	}

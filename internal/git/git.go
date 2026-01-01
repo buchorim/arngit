@@ -40,23 +40,6 @@ func (g *Git) run(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// runWithEnv executes a git command with custom environment.
-func (g *Git) runWithEnv(env []string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = g.WorkDir
-	cmd.Env = append(os.Environ(), env...)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), stderr.String())
-	}
-
-	return strings.TrimSpace(stdout.String()), nil
-}
-
 // IsRepo checks if current directory is a git repository.
 func (g *Git) IsRepo() bool {
 	_, err := g.run("rev-parse", "--git-dir")

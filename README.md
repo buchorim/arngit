@@ -115,6 +115,8 @@ arngit pull                        # Pull changes
 arngit diff [--staged]             # Show changes
 arngit sync                        # Fetch + rebase
 arngit history [-n 20]             # Commit log
+arngit history --graph             # ASCII branch graph
+arngit history --graph -n 30       # Graph with limit
 ```
 
 ---
@@ -183,6 +185,12 @@ arngit hooks list                  # Show installed hooks
 arngit hooks install pre-commit    # Install hook template
 arngit hooks uninstall pre-commit  # Remove hook
 
+# Auto-Push Watcher
+arngit watch                       # Watch with default thresholds
+arngit watch --threshold commits --value 5     # Push every 5 commits
+arngit watch --threshold time --value 10m      # Push every 10 minutes
+arngit watch --threshold size --value 2MB       # Push when changes > 2MB
+
 # Analytics
 arngit stats                       # Repository statistics
 arngit blame <file>                # File annotations
@@ -222,112 +230,211 @@ arngit logs                        # View application logs
 
 ---
 
+## ARNGit API Server
+
+A **standalone companion tool** that exposes your GitHub data via local REST API. Separate binary, not embedded in arngit. Developer owns the security layer.
+
+### How It Works
+
+```
+arngit (CLI)                    arngit-api (HTTP server)
+├── ~/.arngit/accounts/ ───────> reads PAT from here
+└── git workflow                └── REST endpoints → GitHub API
+```
+
+### Download
+
+Grab `arngit-api.exe` from the same [release page](https://github.com/buchorim/arngit/releases/latest).
+
+### Quick Start
+
+```bash
+# Start with readonly preset (all GET endpoints)
+arngit-api --preset readonly
+
+# Custom port
+arngit-api --preset readonly --port 8080
+
+# Full access (including write operations)
+arngit-api --preset full
+
+# Custom config file
+arngit-api --config config.json
+```
+
+### Presets
+
+| Preset | Endpoints | Write |
+|--------|-----------|-------|
+| `minimal` | `/status`, `/account` | No |
+| `readonly` | All GET endpoints | No |
+| `releases` | Status + releases only | Yes (create release) |
+| `full` | Everything | Yes (create repo, release) |
+| `custom` | Defined in `config.json` | Per-endpoint |
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/status` | Server info, uptime, enabled endpoints |
+| GET | `/account` | Current account (PAT never exposed) |
+| GET | `/rate-limit` | GitHub API rate limit status |
+| GET | `/repos` | List your repositories |
+| GET | `/repos/:owner/:repo` | Repository detail |
+| GET | `/repos/:owner/:repo/pulls` | Pull requests |
+| GET | `/repos/:owner/:repo/issues` | Issues |
+| GET | `/repos/:owner/:repo/releases` | Releases |
+| POST | `/repos` | Create repository *(full preset)* |
+| POST | `/repos/:owner/:repo/releases` | Create release *(releases/full preset)* |
+
+### Example Usage
+
+```bash
+# Start server
+arngit-api --preset readonly
+
+# From any script/tool:
+curl http://localhost:6700/status
+curl http://localhost:6700/repos
+curl http://localhost:6700/repos/buchorim/arngit/releases
+curl http://localhost:6700/rate-limit
+
+# Python example
+python -c "
+import requests
+repos = requests.get('http://localhost:6700/repos').json()
+for r in repos['data']:
+    print(f\"{r['name']} - {'private' if r['private'] else 'public'}\")
+"
+```
+
+### Response Format
+
+All responses follow a consistent JSON structure:
+
+```json
+{
+  "ok": true,
+  "data": { ... },
+  "timestamp": "2026-02-21T09:00:00Z"
+}
+```
+
+Error responses:
+
+```json
+{
+  "ok": false,
+  "error": "message",
+  "code": 404,
+  "timestamp": "2026-02-21T09:00:00Z"
+}
+```
+
+### Custom Config
+
+Create a `config.json` to enable/disable individual endpoints:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 6700,
+  "preset": "custom",
+  "endpoints": {
+    "status":     { "enabled": true },
+    "account":    { "enabled": true },
+    "repos":      { "enabled": true,  "write": false },
+    "pulls":      { "enabled": false },
+    "issues":     { "enabled": false },
+    "releases":   { "enabled": true,  "write": true },
+    "rate_limit": { "enabled": true }
+  }
+}
+```
+
+### Adding Your Own Security
+
+arngit-api ships with **zero auth** by design. You add what you need:
+
+```go
+// Token middleware example
+func authMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Header.Get("X-API-Key") != os.Getenv("API_KEY") {
+            http.Error(w, "unauthorized", 401)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+
+// Rate limiting, CORS, logging - add any middleware you need
+// Fork the repo and modify server.go
+```
+
+---
+
+## What's New
+
+### v3.2.0
+
+- **ARNGit API Server** - standalone REST server for GitHub data
+  - Config-driven endpoint selection with 5 presets
+  - Read + write operations (create repos, releases)
+  - Zero-auth design - developer adds own security
+- **Watch mode** - auto-push with threshold triggers (commits/time/size)
+- **`history --graph`** - ASCII branch topology visualization
+- **Dashboard refactor** - uses `git.Service` instead of raw `exec.Command`
+- **Code split** - `git_commands.go` separated into 5 domain files
+
+### v3.1.0
+
+- First tagged build with ldflags versioning
+- Removed source code from repo (binary-only distribution)
+
+### v3.0.0
+
+- **14 new commands** across GitHub API, Automation, Analytics
+- GitHub API: repo create/list/delete, release create/upload, PR create/list
+- Automation: hooks, changelog, version bump
+- Analytics: stats, blame
+- Account validation with PAT scope inspection
+- PAT decryption fix (CRLF trimming)
+- Comprehensive README with badges and Mermaid diagram
+
+---
+
 ## Architecture
 
 ```mermaid
 graph TB
     CLI["CLI Entry<br/>cmd/arngit/main.go"] --> Router["Command Router<br/>command/router.go"]
-    Router --> Git["Git Commands<br/>command/git_commands.go"]
-    Router --> GH["GitHub Commands<br/>command/github_commands.go"]
-    Router --> Auto["Automation Commands<br/>command/automation_commands.go"]
-    Router --> Analytics["Analytics Commands<br/>command/analytics_commands.go"]
-    Router --> System["System Commands<br/>command/system_commands.go"]
+    Router --> Git["Git Commands<br/>git_commands.go"]
+    Router --> Branch["Branch/Tag/Stash/Remote<br/>branch_ remote_ stash_ tag_commands.go"]
+    Router --> GH["GitHub Commands<br/>github_commands.go"]
+    Router --> Auto["Automation Commands<br/>automation_commands.go"]
+    Router --> Analytics["Analytics Commands<br/>analytics_commands.go"]
+    Router --> System["System Commands<br/>system_commands.go"]
 
     Git --> GitSvc["Git Service<br/>git/service.go"]
     GH --> GHClient["GitHub Client<br/>github/client.go"]
-    GH --> GHRepo["Repo API<br/>github/repo.go"]
-    GH --> GHRelease["Release API<br/>github/release.go"]
-    GH --> GHPR["PR API<br/>github/pr.go"]
-    Auto --> Hooks["Hooks<br/>automation/hooks.go"]
-    Auto --> Changelog["Changelog<br/>automation/changelog.go"]
-    Auto --> Version["Version<br/>automation/version.go"]
-    Analytics --> Stats["Stats<br/>analytics/stats.go"]
+    Auto --> Watcher["Watcher<br/>automation/watcher.go"]
 
     Router --> Engine["Core Engine<br/>core/engine.go"]
-    Engine --> Config["Config<br/>core/config.go"]
     Engine --> Accounts["Accounts<br/>core/account.go"]
     Engine --> Protected["Protected<br/>core/protected.go"]
-    Engine --> Update["Updater<br/>core/update.go"]
-    Engine --> Logger["Logger<br/>core/logger.go"]
-    Engine --> Storage["Storage<br/>core/storage.go"]
 
     Router --> UI["UI Renderer<br/>ui/render.go"]
     UI --> Dashboard["Dashboard<br/>ui/dashboard.go"]
+
+    API["ARNGit API Server<br/>(standalone binary)"] -.->|reads PAT| Accounts
 
     style CLI fill:#7c3aed,stroke:#7c3aed,color:#fff
     style Engine fill:#0ea5e9,stroke:#0ea5e9,color:#fff
     style GHClient fill:#238636,stroke:#238636,color:#fff
     style UI fill:#f59e0b,stroke:#f59e0b,color:#000
+    style API fill:#ef4444,stroke:#ef4444,color:#fff
 ```
-
----
-
-## Project Structure
-
-```
-arngit/
-├── cmd/arngit/          # Entry point
-│   └── main.go          # CLI bootstrap + ldflags version
-├── internal/
-│   ├── core/            # Business logic (no I/O)
-│   │   ├── engine.go    # Main engine, service orchestration
-│   │   ├── config.go    # YAML configuration
-│   │   ├── account.go   # Multi-account + AES-256-GCM encryption
-│   │   ├── protected.go # Repository protection rules
-│   │   ├── update.go    # Self-update from GitHub Releases
-│   │   ├── storage.go   # Storage paths
-│   │   ├── logger.go    # Structured logging
-│   │   └── errors.go    # Error registry with codes + hints
-│   ├── command/         # CLI command handlers
-│   │   ├── router.go    # Command routing + REPL
-│   │   ├── git_commands.go
-│   │   ├── github_commands.go
-│   │   ├── automation_commands.go
-│   │   ├── analytics_commands.go
-│   │   ├── system_commands.go
-│   │   ├── help.go      # Structured help system
-│   │   └── context.go   # Execution context
-│   ├── git/             # Git operations (I/O layer)
-│   │   └── service.go   # exec.Command("git", ...) wrapper
-│   ├── github/          # GitHub API client
-│   │   ├── client.go    # HTTP client + auth + rate limiting
-│   │   ├── repo.go      # Repository CRUD
-│   │   ├── release.go   # Release + asset upload
-│   │   └── pr.go        # Pull request management
-│   ├── automation/      # Automation tools
-│   │   ├── hooks.go     # Git hooks management
-│   │   ├── changelog.go # Conventional commit changelog
-│   │   └── version.go   # Semantic version bumping
-│   ├── analytics/       # Repository analytics
-│   │   └── stats.go     # Commit stats + activity
-│   └── ui/              # Terminal UI
-│       ├── render.go    # Colors, tables, prompts, spinners
-│       ├── dashboard.go # Interactive dashboard
-│       └── messages.go  # Feedback templates
-└── go.mod
-```
-
----
-
-## Building Releases
-
-Version is injected at build time via Go ldflags:
-
-```bash
-# From git tag (recommended)
-VERSION=$(git describe --tags --always)
-BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-GIT_COMMIT=$(git rev-parse --short HEAD)
-
-go build -ldflags "\
-  -X main.Version=$VERSION \
-  -X main.BuildTime=$BUILD_TIME \
-  -X main.GitCommit=$GIT_COMMIT \
-  -s -w" \
-  -o arngit.exe ./cmd/arngit
-```
-
-The version badge at the top of this README automatically reflects the latest release tag.
 
 ---
 
@@ -340,6 +447,7 @@ The version badge at the top of this README automatically reflects the latest re
 | Delete Confirmation | All destructive actions require `[y/N]` |
 | Update Verification | Binary updates only from official GitHub Releases |
 | Token Scoping | PAT scope inspection via `account check` |
+| API Server | Zero-auth by default, developer adds own layer |
 
 ---
 
